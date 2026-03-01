@@ -1,0 +1,14 @@
+.git
+.gitignore
+README.md
+SETUP.md
+todo.md
+.env.example
+node_modules
+.manus-logs
+pfip.db
+venv
+.venv
+*.pyc
+__pycache__
+.DS_Store

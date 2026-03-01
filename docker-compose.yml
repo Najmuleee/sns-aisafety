@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: pfip_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: pfip
+      MYSQL_USER: pfip_user
+      MYSQL_PASSWORD: pfip_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - pfip_network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  # Redis (optional, for session/queue management)
+  redis:
+    image: redis:7-alpine
+    container_name: pfip_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - pfip_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      timeout: 3s
+      retries: 5
+
+  # MinIO (S3-compatible storage)
+  minio:
+    image: minio/minio:latest
+    container_name: pfip_minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/minio_data
+    networks:
+      - pfip_network
+    command: server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      timeout: 20s
+      retries: 3
+
+  # PFIP Backend Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pfip_app
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://pfip_user:pfip_password@mysql:3306/pfip
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: your_jwt_secret_here
+      VITE_APP_ID: your_app_id
+      OAUTH_SERVER_URL: https://api.manus.im
+      VITE_OAUTH_PORTAL_URL: https://portal.manus.im
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_BUCKET: pfip-images
+    ports:
+      - "3000:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - pfip_network
+    volumes:
+      - ./server:/app/server
+      - ./client:/app/client
+      - /app/node_modules
+    command: pnpm dev
+
+  # Python Face Processing Service (optional, can run in separate container)
+  face_processor:
+    image: python:3.11-slim
+    container_name: pfip_face_processor
+    working_dir: /app
+    volumes:
+      - ./server/services:/app/services
+      - /tmp/pfip_images:/tmp/pfip_images
+    networks:
+      - pfip_network
+    command: python3 -u services/faceProcessor.py
+    environment:
+      PYTHONUNBUFFERED: 1
+
+volumes:
+  mysql_data:
+  redis_data:
+  minio_data:
+
+networks:
+  pfip_network:
+    driver: bridge
